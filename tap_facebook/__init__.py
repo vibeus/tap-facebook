@@ -226,6 +226,7 @@ class IncrementalStream(Stream):
                 if not max_bookmark or updated_at > max_bookmark:
                     max_bookmark = updated_at
 
+                time.sleep(15)
                 record = record_preparation(record)
                 yield {'record': record}
 
@@ -286,6 +287,7 @@ class AdCreative(Stream):
     # Added retry_pattern to handle AttributeError raised from account.get_ad_creatives() below
     @retry_pattern(backoff.expo, (FacebookRequestError, TypeError, AttributeError), max_tries=5, factor=5)
     def get_adcreatives(self):
+        time.sleep(15)
         return self.account.get_ad_creatives(params={'limit': RESULT_RETURN_LIMIT})
 
     def sync(self):
@@ -337,7 +339,10 @@ class Ads(IncrementalStream):
             ads = do_request_multiple()
         else:
             ads = do_request()
+        COUNT = 0
         for message in self._iterate(ads, prepare_record):
+            COUNT += 1
+            LOGGER.info(f"---------------------- Ads api request count {COUNT} ----------------------")
             yield message
 
 
@@ -385,8 +390,10 @@ class AdSets(IncrementalStream):
             ad_sets = do_request_multiple()
         else:
             ad_sets = do_request()
-
+        COUNT = 0
         for message in self._iterate(ad_sets, prepare_record):
+            COUNT += 1
+            LOGGER.info(f"---------------------- AdSets api request count {COUNT} ----------------------")
             yield message
 
 class Campaigns(IncrementalStream):
@@ -442,8 +449,10 @@ class Campaigns(IncrementalStream):
             campaigns = do_request_multiple()
         else:
             campaigns = do_request()
-
+        COUNT = 0
         for message in self._iterate(campaigns, prepare_record):
+            COUNT += 1
+            LOGGER.info(f"---------------------- Campaigns api request count {COUNT} ----------------------")
             yield message
 
 @attr.s
