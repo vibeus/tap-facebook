@@ -644,7 +644,6 @@ class AdsInsights(Stream):
             buffered_start_date = min_start_date
 
         end_date = buffered_start_date.add(days=28) # pendulum.now()
-        LOGGER.info(end_date)
         if CONFIG.get('end_date'):
             end_date = pendulum.parse(CONFIG.get('end_date'))
 
