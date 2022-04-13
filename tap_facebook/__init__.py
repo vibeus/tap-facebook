@@ -623,7 +623,7 @@ class AdsInsights(Stream):
         if self.options.get('primary-keys'):
             self.key_properties.extend(self.options['primary-keys'])
 
-        self.buffer_days = 28
+        self.buffer_days = CONFIG.get('buffer_days')
         if CONFIG.get('insights_buffer_days'):
             self.buffer_days = int(CONFIG.get('insights_buffer_days'))
             # attribution window should only be 1, 7 or 28
@@ -643,7 +643,8 @@ class AdsInsights(Stream):
                         min_start_date.to_date_string())
             buffered_start_date = min_start_date
 
-        end_date = pendulum.now()
+        end_date = buffered_start_date.add(days=28) # pendulum.now()
+        LOGGER.info(end_date)
         if CONFIG.get('end_date'):
             end_date = pendulum.parse(CONFIG.get('end_date'))
 
