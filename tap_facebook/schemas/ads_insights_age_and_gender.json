@@ -264,6 +264,12 @@
         "number"
       ]
     },
+    "reach": {
+      "type": [
+        "null",
+        "integer"
+      ]
+    },
     "canvas_avg_view_percent": {
       "type": [
         "null",
