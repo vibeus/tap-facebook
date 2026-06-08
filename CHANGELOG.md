@@ -1,10 +1,16 @@
 # Changelog
 
-*Upstream test files changes are not included*
+## 1.25.1
+  * Bump requests dependency from 2.32.4 to 2.34.0 [#266](https://github.com/singer-io/tap-facebook/pull/266)
+
+## 1.25.0
+  * Bump facebook_business SDK from v23.0.1 to v25.0.1 to stay ahead of v23.0 deprecation (June 9, 2026) [#265](https://github.com/singer-io/tap-facebook/pull/265)
+  * Confirmed no schema changes required: `smart_promotion_type` was never present in campaigns schema
+  * Add explicit "Job Failed" status handling in async Insights job polling; surface v25.0 error fields (`error_code`, `error_message`, `error_subcode`, `error_user_title`, `error_user_msg`)
 
 ## 1.24.0
   * Bump facebook_business SDK to v23.0.1 [#255](https://github.com/singer-io/tap-facebook/pull/255)
-  * Remove Deprecated Fields from adcreative [#255](https://github.com/singer-io/tap-facebook/pull/255) *We do not accept it as we don't need adcreative data*
+  * Remove Deprecated Fields from adcreative [#255](https://github.com/singer-io/tap-facebook/pull/255)
 
 ## 1.23.0
   * Add default value of missing pk for ads_insights_hourly_advertiser [#250](https://github.com/singer-io/tap-facebook/pull/250)
@@ -13,7 +19,7 @@
   * Bump dependency versions for twistlock compliance [#247](https://github.com/singer-io/tap-facebook/pull/247)
 
 ## 1.22.0
-  * Adds warning when 'reach' is requested for breakdown queries older than 13 months due to Meta API changes  [#245](https://github.com/singer-io/tap-facebook/pull/245) *We do not accept it as we might not have such queries*
+  * Adds warning when 'reach' is requested for breakdown queries older than 13 months due to Meta API changes  [#245](https://github.com/singer-io/tap-facebook/pull/245)
 
 ## 1.21.0
   * Bump facebook_business SDK to v21.0.5 [#242](https://github.com/singer-io/tap-facebook/pull/242)
