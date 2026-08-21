@@ -613,39 +613,77 @@ ALL_ACTION_BREAKDOWNS = [
     'action_destination'
 ]
 
+def _normalize_account_ids(raw):
+    """Accept either a single string or a list of strings for config.account_id."""
+    if isinstance(raw, str):
+        return [raw]
+    if isinstance(raw, list) and all(isinstance(s, str) and s for s in raw):
+        if not raw:
+            raise TapFacebookException("account_id list is empty")
+        return list(raw)
+    raise SingerConfigurationError(
+        "config.account_id must be a string or a list of strings, got: {!r}".format(raw))
+
+def _read_bookmark(state, stream_name, account_id, replication_key):
+    """
+    Read a bookmark value in new shape (state.bookmarks[stream_name][account_id][replication_key])
+    to adapt to multi-account data pulling.
+    Legacy shape (state.bookmarks[stream_name][replication_key]) will not be supported.
+    A manual edit of the state file in AWS S3 might be needed.
+    """
+    bms = (state or {}).get('bookmarks') or {}
+    stream_bms = bms.get(stream_name) or {}
+    per_account = stream_bms.get(account_id)
+    if isinstance(per_account, dict) and replication_key in per_account:
+        return per_account[replication_key]
+    return None
+
+def _write_bookmark(state, stream_name, account_id, replication_key, value):
+    """Write a bookmark value in the new shape."""
+    state = state if state is not None else {}
+    bms = state.setdefault('bookmarks', {})
+    stream_bms = bms.setdefault(stream_name, {})
+    per_account = stream_bms.setdefault(account_id, {})
+    per_account[replication_key] = value
+    return state
+
 def get_start(stream, bookmark_key):
     tap_stream_id = stream.name
     state = stream.state or {}
-    current_bookmark = singer.get_bookmark(state, tap_stream_id, bookmark_key)
+    account_id = stream.account['account_id']
+    current_bookmark = _read_bookmark(state, tap_stream_id, account_id, bookmark_key)
     if current_bookmark is None:
         if isinstance(stream, IncrementalStream):
             return None
         else:
-            LOGGER.info("no bookmark found for %s, using start_date instead...%s", tap_stream_id, CONFIG['start_date'])
+            LOGGER.info("no bookmark found for %s/%s, using start_date instead...%s",
+                        tap_stream_id, account_id, CONFIG['start_date'])
             return pendulum.parse(CONFIG['start_date'])
-    LOGGER.info("found current bookmark for %s:  %s", tap_stream_id, current_bookmark)
+    LOGGER.info("found current bookmark for %s/%s:  %s",
+                tap_stream_id, account_id, current_bookmark)
     return pendulum.parse(current_bookmark)
 
 def advance_bookmark(stream, bookmark_key, date):
     tap_stream_id = stream.name
     state = stream.state or {}
-    LOGGER.info('advance(%s, %s)', tap_stream_id, date)
+    account_id = stream.account['account_id']
+    LOGGER.info('advance(%s/%s, %s)', tap_stream_id, account_id, date)
     date = pendulum.parse(date) if date else None
     current_bookmark = get_start(stream, bookmark_key)
 
     if date is None:
-        LOGGER.info('Did not get a date for stream %s '+
-                    ' not advancing bookmark',
-                    tap_stream_id)
-    elif not current_bookmark or date > current_bookmark:
-        LOGGER.info('Bookmark for stream %s is currently %s, ' +
+        LOGGER.info('Did not get a date for stream %s/%s, ' +
+                    'not advancing bookmark',
+                    tap_stream_id, account_id)
+        return state
+    if not current_bookmark or date > current_bookmark:
+        LOGGER.info('Bookmark for stream %s/%s is currently %s, ' +
                     'advancing to %s',
-                    tap_stream_id, current_bookmark, date)
-        state = singer.write_bookmark(state, tap_stream_id, bookmark_key, str(date))
-    else:
-        LOGGER.info('Bookmark for stream %s is currently %s ' +
-                    'not changing to %s',
-                    tap_stream_id, current_bookmark, date)
+                    tap_stream_id, account_id, current_bookmark, date)
+        return _write_bookmark(state, tap_stream_id, account_id, bookmark_key, str(date))
+    LOGGER.info('Bookmark for stream %s/%s is currently %s, ' +
+                'not changing to %s',
+                tap_stream_id, account_id, current_bookmark, date)
     return state
 
 @attr.s
@@ -959,8 +997,8 @@ def do_discover():
 def main_impl():
     try:
         args = utils.parse_args(REQUIRED_CONFIG_KEYS)
-        account_id = args.config['account_id']
         access_token = args.config['access_token']
+        account_ids = _normalize_account_ids(args.config['account_id'])
 
         CONFIG.update(args.config)
 
@@ -974,17 +1012,26 @@ def main_impl():
         else:
             request_timeout = REQUEST_TIMEOUT # If value is 0,"0","" or not passed then set default to 300 seconds.
 
+        # Discover all ad accounts reachable via this access token (one-shot).
         global API
         API = FacebookAdsApi.init(access_token=access_token, timeout=request_timeout)
         user = fb_user.User(fbid='me')
+        all_accounts = {acc['account_id']: acc for acc in user.get_ad_accounts()}
 
-        accounts = user.get_ad_accounts()
-        account = None
-        for acc in accounts:
-            if acc['account_id'] == account_id:
-                account = acc
-        if not account:
-            raise SingerConfigurationError("Couldn't find account with id {}".format(account_id))
+        # Match requested account_ids against visible accounts.
+        selected_accounts = []
+        missing = []
+        for aid in account_ids:
+            if aid in all_accounts:
+                selected_accounts.append(all_accounts[aid])
+            else:
+                missing.append(aid)
+        if missing:
+            raise SingerConfigurationError(
+                "Couldn't find account(s): {}".format(", ".join(missing)))
+        if not selected_accounts:
+            raise SingerConfigurationError(
+                "No valid ad accounts selected from account_id={!r}".format(account_ids))
     except FacebookError as fb_error:
         raise_from(SingerConfigurationError, fb_error)
 
@@ -996,7 +1043,11 @@ def main_impl():
     elif args.properties:
         catalog = Catalog.from_dict(args.properties)
         try:
-            do_sync(account, catalog, args.state)
+            for account in selected_accounts:
+                LOGGER.info("=== Syncing account %s ===", account['account_id'])
+                API = FacebookAdsApi.init(access_token=access_token,
+                                          timeout=request_timeout)
+                do_sync(account, catalog, args.state)
         except FacebookError as fb_error:
             raise_from(SingerSyncError, fb_error)
     else:
