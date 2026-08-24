@@ -91,6 +91,59 @@ LOGGER = singer.get_logger()
 
 CONFIG = {}
 
+def _install_response_header_logger():
+    """
+    Monkey-patch FacebookAdsApi.call to log response headers for the
+    three ads_insights-related API calls.
+
+    Header selection:
+      - POST /act_X/insights   (job submit): x-business-use-case-usage, x-fb-ads-insights-throttle
+      - GET  /{job_id}          (job poll):  x-business-use-case-usage
+      - GET  /{job_id}/insights (result):    x-business-use-case-usage
+    """
+    import facebook_business.api as _fb_api
+    if getattr(_fb_api.FacebookAdsApi.call, '_vibeus_header_logger', False):
+        return  # already patched; idempotent
+
+    _original_call = _fb_api.FacebookAdsApi.call
+
+    def _logged_call(self, method, path, params=None, headers=None, files=None,
+                     url_override=None, api_version=None):
+        response = _original_call(self, method, path, params, headers, files,
+                                  url_override, api_version)
+
+        path_str = "/".join(str(p) for p in path) if not isinstance(path, str) else path
+
+        is_submit = method == 'POST' and path_str.endswith('/insights')
+        is_result = method == 'GET'  and path_str.endswith('/insights')
+        is_poll   = method == 'GET'  and '/insights' not in path_str
+
+        if is_submit or is_result or is_poll:
+            try:
+                hdrs = dict(response.headers()) if response.headers() else {}
+            except Exception:
+                hdrs = {}
+
+            if is_submit:
+                tag = 'SUBMIT'
+                keys = ('x-business-use-case-usage', 'x-fb-ads-insights-throttle')
+            else:
+                tag = 'POLL' if is_poll else 'RESULT'
+                keys = ('x-business-use-case-usage',)
+
+            subset = {k: hdrs[k] for k in keys if k in hdrs}
+            LOGGER.info(
+                "API RESP [%s] %s %s -> HTTP %s | watched: %s",
+                tag, method, path_str,
+                getattr(response, '_http_status', '?'),
+                subset if subset else '(none)')
+
+        return response
+
+    _logged_call._vibeus_header_logger = True
+    _fb_api.FacebookAdsApi.call = _logged_call
+
+
 def retry_on_summary_param_error(backoff_type, exception, **wait_gen_kwargs):
     """
     At times, the Facebook Graph API exhibits erratic behavior, 
@@ -1015,6 +1068,7 @@ def main_impl():
         # Discover all ad accounts reachable via this access token (one-shot).
         global API
         API = FacebookAdsApi.init(access_token=access_token, timeout=request_timeout)
+        _install_response_header_logger()  # patch FacebookAdsApi.call for insights header logging
         user = fb_user.User(fbid='me')
         all_accounts = {acc['account_id']: acc for acc in user.get_ad_accounts()}
 
