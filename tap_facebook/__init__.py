@@ -817,6 +817,28 @@ class AdsInsights(Stream):
     # Added retry_pattern to handle AttributeError raised from requests call below
     @retry_pattern(backoff.expo, (FacebookRequestError, InsightsJobTimeout, FacebookBadObjectError, TypeError, AttributeError), max_tries=5, factor=5)
     def run_job(self, params):
+        # Retry mechanism for app-level rate limited error.
+        max_retries = 3
+        backoff_seconds = 60
+        for attempt in range(1, max_retries + 2):
+            try:
+                return self._run_job_once(params)
+            except TapFacebookException as exc:
+                exc_str = str(exc)
+                is_rate_limit = (
+                    'error_subcode=1504022' in exc_str
+                    or 'error_subcode=1504039' in exc_str
+                )
+                if not is_rate_limit or attempt > max_retries:
+                    raise
+                LOGGER.warning(
+                    'Insights job rate-limited (subcode 1504022/1504039). '
+                    'Sleeping %ds and resubmitting (attempt %d/%d)...',
+                    backoff_seconds, attempt, max_retries)
+                time.sleep(backoff_seconds)
+                backoff_seconds *= 2  # 60 -> 120 -> 240
+
+    def _run_job_once(self, params):
         LOGGER.info('Starting adsinsights job with params %s', params)
         job = self.account.get_insights( # pylint: disable=no-member
             params=params,
